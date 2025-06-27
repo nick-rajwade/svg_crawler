@@ -243,8 +243,33 @@ class TemenosSVGCrawler:
             print(f"❌ Failed to extract SVG from {page_title}: {e}")
             return None
     
-    def extract_all_svgs_from_page(self, page_title="Unknown", section_name="Unknown", prefix="overview"):
-        """Extract and save all SVGs from the current page, regardless of size"""
+    def is_process_map_svg(self, svg_content):
+        """Heuristic to determine if an SVG is a process map (not an icon/image)"""
+        try:
+            from xml.etree import ElementTree as ET
+            root = ET.fromstring(svg_content)
+            width = root.attrib.get('width', '')
+            height = root.attrib.get('height', '')
+            # Try to parse width/height as int (strip px if present)
+            def parse_dim(val):
+                try:
+                    return int(float(val.replace('px', '')))
+                except:
+                    return 0
+            w = parse_dim(width)
+            h = parse_dim(height)
+            # Count number of child elements (complexity)
+            num_elements = len(list(root.iter()))
+            # Heuristic: process maps are large and complex
+            if (w > 300 or h > 300) or num_elements > 20:
+                return True
+            return False
+        except Exception:
+            # If parsing fails, treat as icon/image
+            return False
+    
+    def extract_all_svgs_from_page(self, page_title="Unknown", section_name="Unknown", prefix="overview", sub_section=None):
+        """Extract and save all process map SVGs from the current page, ignoring icons/images"""
         try:
             time.sleep(2)
             svg_script = """
@@ -259,8 +284,15 @@ class TemenosSVGCrawler:
             if svg_list:
                 print(f"✅ Found {len(svg_list)} SVG(s) on {page_title}")
                 for idx, svg_content in enumerate(svg_list):
-                    filename = f"{prefix}_svg_{idx+1}.svg"
-                    self.save_svg_file(svg_content, section_name, filename)
+                    if self.is_process_map_svg(svg_content):
+                        # Use section/sub-section and process name for folder/filename
+                        folder = section_name
+                        if sub_section:
+                            folder = os.path.join(section_name, sub_section)
+                        filename = self.sanitize_filename(page_title) + ".svg"
+                        self.save_svg_file(svg_content, folder, filename)
+                    else:
+                        print(f"   ⏩ Ignored icon/image SVG {idx+1} on {page_title}")
             else:
                 print(f"⚠️  No SVGs found in: {page_title}")
         except Exception as e:
@@ -578,8 +610,12 @@ class TemenosSVGCrawler:
                     driver.get(url)
                     time.sleep(2)
                     page_title = driver.title
-                    section_name = "library_recursive"
-                    self.extract_all_svgs_from_page(page_title=page_title, section_name=section_name, prefix=f"page_{page_count+1}")
+                    # Try to extract section/sub-section from breadcrumb if available
+                    breadcrumb_elements = driver.find_elements(By.CSS_SELECTOR, ".breadcrumb a, .breadcrumb span")
+                    breadcrumb = [elem.text.strip() for elem in breadcrumb_elements if elem.text.strip()]
+                    section = breadcrumb[1] if len(breadcrumb) > 1 else "Library"
+                    sub_section = breadcrumb[2] if len(breadcrumb) > 2 else None
+                    self.extract_all_svgs_from_page(page_title=page_title, section_name=section, prefix=f"page_{page_count+1}", sub_section=sub_section)
                     # Only crawl links that are under the Library section or are process/content pages
                     links = driver.find_elements(By.TAG_NAME, "a")
                     for link in links:
