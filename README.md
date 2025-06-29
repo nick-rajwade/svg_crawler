@@ -2,7 +2,7 @@
 
 This Python script automates the extraction of all SVG diagrams from the Temenos TLC Engine website using Selenium.
 
-## @Tejas - Review the copilot fix in Issues and the feature branch (copilot-fix1)
+## @Tejas - Review the copilot fix in Issues and the feature branch (copilot/fix-1)
 
 ## Features
 - Logs into the Temenos TLC Engine portal with your credentials
