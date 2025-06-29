@@ -268,6 +268,42 @@ class TemenosSVGCrawler:
             # If parsing fails, treat as icon/image
             return False
     
+    def parse_section_from_breadcrumb(self, breadcrumb_list):
+        """
+        Parse section information from breadcrumb list to match expected folder structure
+        Expected format: "0_Customer_Relationship_Management_Processes"
+        """
+        if not breadcrumb_list or len(breadcrumb_list) < 2:
+            return "Library", None
+        
+        # Look for numbered sections in breadcrumb
+        for item in breadcrumb_list:
+            # Match pattern like "0. Customer Relationship Management Processes"
+            match = re.match(r'^(\d+)\.\s+(.+)$', item.strip())
+            if match:
+                section_num = match.group(1)
+                section_name = match.group(2)
+                # Create folder name in expected format
+                folder_name = f"{section_num}_{section_name.replace(' ', '_')}"
+                return folder_name, section_name
+        
+        # If no numbered section found, use the second item (after "Library")
+        if len(breadcrumb_list) > 1:
+            section_text = breadcrumb_list[1]
+            # Check if it contains "Processes"
+            if "Processes" in section_text:
+                # Try to extract number if present
+                match = re.search(r'(\d+)', section_text)
+                if match:
+                    section_num = match.group(1)
+                    folder_name = f"{section_num}_{section_text.replace(' ', '_').replace('.', '')}"
+                    return folder_name, section_text
+            
+            # Fallback to sanitized section text
+            return section_text.replace(' ', '_').replace('.', ''), section_text
+        
+        return "Library", None
+
     def extract_all_svgs_from_page(self, page_title="Unknown", section_name="Unknown", prefix="overview", sub_section=None):
         """Extract and save all process map SVGs from the current page, ignoring icons/images"""
         try:
@@ -393,9 +429,21 @@ class TemenosSVGCrawler:
             # Click on the section
             section_info['element'].click()
             time.sleep(3)
+            
+            # Get breadcrumb for improved section naming
+            breadcrumb_elements = self.driver.find_elements(By.CSS_SELECTOR, ".breadcrumb a, .breadcrumb span")
+            breadcrumb = [elem.text.strip() for elem in breadcrumb_elements if elem.text.strip()]
+            
+            # Use improved breadcrumb parsing to match expected folder structure
+            section_folder, section_name = self.parse_section_from_breadcrumb(breadcrumb)
+            if section_folder == "Library":
+                # Fallback to sanitized title if breadcrumb parsing fails
+                section_folder = self.sanitize_filename(section_info['title'])
+            
+            print(f"  📂 Using section folder: {section_folder}")
+            
             # Extract SVGs from the section overview page
-            section_name = self.sanitize_filename(section_info['title'])
-            self.extract_all_svgs_from_page(page_title=self.driver.title, section_name=section_name, prefix="overview")
+            self.extract_all_svgs_from_page(page_title=self.driver.title, section_name=section_folder, prefix="overview")
             # Find all process links in this section
             process_links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/Content/Index/']")
             if max_processes:
@@ -407,7 +455,7 @@ class TemenosSVGCrawler:
                     self.driver.execute_script("arguments[0].click();", link)
                     time.sleep(3)
                     # Extract all SVGs from this process page
-                    self.extract_all_svgs_from_page(page_title=self.driver.title, section_name=section_name, prefix=f"process_{i+1}")
+                    self.extract_all_svgs_from_page(page_title=self.driver.title, section_name=section_folder, prefix=f"process_{i+1}")
                     self.driver.back()
                     time.sleep(2)
                     section_link = self.driver.find_element(By.XPATH, f"//li[contains(text(), '{section_info['title']}')]")
@@ -566,7 +614,15 @@ class TemenosSVGCrawler:
                 self.driver.quit()
     
     def crawl_library_recursively(self, max_pages=1000):
-        """Recursively crawl all unique pages/links under the Library section, extracting SVGs from every page."""
+        """
+        Recursively crawl all unique pages/links under the Library section, extracting SVGs from every page.
+        
+        This method now creates proper folder structure to mimic the website organization:
+        - Parses breadcrumbs to identify numbered sections (0-15)
+        - Creates folders like "0_Customer_Relationship_Management_Processes"
+        - Handles sub-sections as subfolders within main sections
+        - Maintains the documented output structure format
+        """
         print("\n📚 Starting recursive Library crawl...")
         if not self.setup_driver():
             print("❌ WebDriver setup failed.")
@@ -613,9 +669,22 @@ class TemenosSVGCrawler:
                     # Try to extract section/sub-section from breadcrumb if available
                     breadcrumb_elements = driver.find_elements(By.CSS_SELECTOR, ".breadcrumb a, .breadcrumb span")
                     breadcrumb = [elem.text.strip() for elem in breadcrumb_elements if elem.text.strip()]
-                    section = breadcrumb[1] if len(breadcrumb) > 1 else "Library"
-                    sub_section = breadcrumb[2] if len(breadcrumb) > 2 else None
-                    self.extract_all_svgs_from_page(page_title=page_title, section_name=section, prefix=f"page_{page_count+1}", sub_section=sub_section)
+                    
+                    # Use improved breadcrumb parsing to match expected folder structure
+                    section_folder, section_name = self.parse_section_from_breadcrumb(breadcrumb)
+                    
+                    # Determine sub-section (if any)
+                    sub_section = None
+                    if len(breadcrumb) > 2:
+                        # Check if third breadcrumb item is a sub-section
+                        potential_subsection = breadcrumb[2]
+                        # Only treat as subsection if it doesn't look like a process name
+                        if ("Processes" in potential_subsection or 
+                            any(char.isdigit() and '.' in potential_subsection for char in potential_subsection)):
+                            sub_section = self.sanitize_filename(potential_subsection)
+                    
+                    print(f"  📂 Section: {section_folder}, Sub-section: {sub_section}, Page: {page_title}")
+                    self.extract_all_svgs_from_page(page_title=page_title, section_name=section_folder, prefix=f"page_{page_count+1}", sub_section=sub_section)
                     # Only crawl links that are under the Library section or are process/content pages
                     links = driver.find_elements(By.TAG_NAME, "a")
                     for link in links:
